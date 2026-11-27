@@ -1,45 +1,33 @@
-
 from app.database import get_connection
 from app.embeddings import generate_query_embedding
 
 
 def retrieve_chunks(question, top_k=5):
-
-    # 1. Generate query embedding
+    """Return nearest chunks with page, heading, or row-group metadata."""
     query_embedding = generate_query_embedding(question)
-
-    # 2. Retrieve similar chunks using pgvector
     with get_connection() as conn:
-
         with conn.cursor() as cursor:
-
             cursor.execute(
                 """
-                SELECT
-                    filename,
-                    content,
-                    chunk_number,
-                    embedding <=> %s::vector AS distance
+                SELECT id, document_id, filename, content, chunk_number, metadata,
+                       embedding <=> %s::vector AS distance
                 FROM document_chunks
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
                 """,
-                (
-                    query_embedding,
-                    query_embedding,
-                    top_k
-                )
+                (query_embedding, query_embedding, top_k),
             )
+            rows = cursor.fetchall()
 
-            results = cursor.fetchall()
-
-    # 3. Return retrieved chunks
     return [
         {
-            "filename": row[0],
-            "content": row[1],
-            "chunk_number": row[2],
-            "distance": float(row[3])
+            "id": row[0],
+            "document_id": str(row[1]),
+            "filename": row[2],
+            "content": row[3],
+            "chunk_number": row[4],
+            "metadata": row[5] or {},
+            "distance": float(row[6]),
         }
-        for row in results
+        for row in rows
     ]

@@ -25,6 +25,8 @@ st.set_page_config(
 
 DEFAULTS = {
     "messages": [],
+    "chat_id": None,
+    "chat_error": None,
     "theme": "Dark",
     "font_size": "Default",
     "compact": False,
@@ -59,7 +61,7 @@ st.markdown(
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-FILE_TYPES = ["pdf", "txt"]
+FILE_TYPES = ["pdf", "docx", "txt", "csv"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -120,7 +122,45 @@ def render_upload_result(result):
 
 def new_chat():
 
-    ss.messages = []
+    try:
+        chat = rag_api.create_chat()
+        ss.chat_id = chat["id"]
+        ss.messages = []
+        ss.chat_error = None
+    except rag_api.APIRequestError as exc:
+        ss.chat_error = str(exc)
+
+
+def load_chat(chat_id):
+
+    try:
+        chat = rag_api.get_chat(chat_id)
+        ss.chat_id = chat["id"]
+        ss.messages = [
+            {
+                "role": message["role"],
+                "content": message["content"],
+                "sources": message.get("sources", []),
+            }
+            for message in chat.get("messages", [])
+        ]
+        ss.chat_error = None
+    except rag_api.APIRequestError as exc:
+        ss.chat_error = str(exc)
+
+
+def ensure_active_chat():
+
+    if ss.chat_id:
+        return
+
+    try:
+        chat = rag_api.create_chat()
+        ss.chat_id = chat["id"]
+        ss.messages = []
+        ss.chat_error = None
+    except rag_api.APIRequestError as exc:
+        ss.chat_error = str(exc)
 
 
 
@@ -163,6 +203,31 @@ def sidebar():
             help="Start a new conversation",
         )
 
+        if ss.chat_error:
+            st.error(ss.chat_error)
+
+        # Persistent conversation history
+        st.markdown(
+            '<div class="side-heading">CHAT HISTORY</div>',
+            unsafe_allow_html=True,
+        )
+
+        try:
+            chats = rag_api.list_chats()
+            for chat in chats:
+                chat_id = chat["id"]
+                label = chat.get("title") or "New chat"
+                if st.button(
+                    label[:34],
+                    key=f"open_chat_{chat_id}",
+                    use_container_width=True,
+                    type="secondary" if chat_id != ss.chat_id else "primary",
+                ):
+                    load_chat(chat_id)
+                    st.rerun()
+        except rag_api.APIRequestError:
+            st.caption("Chat history is temporarily unavailable.")
+
         st.divider()
 
         # AI mode
@@ -186,7 +251,7 @@ def sidebar():
         )
 
         uploaded_file = st.file_uploader(
-            "Upload PDF or TXT",
+            "Upload PDF, DOCX, TXT or CSV",
             type=FILE_TYPES,
             key=f"document_uploader_{ss.upload_nonce}",
         )
@@ -228,7 +293,7 @@ def sidebar():
         )
 
         st.caption(
-            "Conversation history is stored in this Streamlit session."
+            "Conversations are saved in PostgreSQL and can be reopened later."
         )
 
         # Sidebar expand/collapse
@@ -267,9 +332,16 @@ def render_sources(sources):
                 f"**{index}. {html.escape(str(filename))}**"
             )
 
-            st.caption(
-                f"Chunk: {chunk_number}"
-            )
+            location_parts = [f"Chunk: {chunk_number}"]
+            if source.get("page") is not None:
+                location_parts.append(f"Page: {source.get('page')}")
+            if source.get("heading"):
+                location_parts.append(f"Heading: {source.get('heading')}")
+            if source.get("row_start") is not None:
+                location_parts.append(
+                    f"Rows: {source.get('row_start')}-{source.get('row_end')}"
+                )
+            st.caption(" · ".join(location_parts))
 
             if distance is not None:
 
@@ -339,7 +411,7 @@ def submit_prompt(prompt):
             "Searching documents and generating answer..."
         ):
 
-            result = rag_api.ask_question(question)
+            result = rag_api.ask_question(question, ss.chat_id)
 
         answer = result.get(
             "answer",
@@ -350,6 +422,7 @@ def submit_prompt(prompt):
             "sources",
             [],
         )
+        ss.chat_id = result.get("chat_id", ss.chat_id)
 
         # Save user message
         user_content = question
@@ -437,6 +510,8 @@ def main():
     backend_ok, backend_message = check_backend()
 
     if backend_ok:
+
+        ensure_active_chat()
 
         st.caption(
             f"🟢 GCP RAG Backend · {backend_message}"
