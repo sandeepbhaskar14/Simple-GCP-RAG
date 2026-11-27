@@ -22,7 +22,12 @@ def _merge_splits(parts: Iterable[str], separator: str, chunk_size: int, overlap
             combined = separator.join(current).strip()
             if combined:
                 chunks.append(combined)
-            while current and current_length > overlap:
+            # Keep overlap where possible, but never let overlap make the next
+            # chunk exceed chunk_size.
+            while current and (
+                current_length > overlap
+                or current_length + len(separator) + len(part) > chunk_size
+            ):
                 removed = current.pop(0)
                 current_length -= len(removed)
                 if current:
