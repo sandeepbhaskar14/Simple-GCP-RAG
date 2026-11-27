@@ -69,7 +69,7 @@ def get_recent_messages(chat_id, limit=10):
             cursor.execute(
                 """
                 SELECT role, content FROM chat_messages
-                WHERE chat_id = %s ORDER BY created_at DESC, id DESC LIMIT %s
+                WHERE chat_id = %s::uuid ORDER BY created_at DESC, id DESC LIMIT %s
                 """,
                 (chat_id, limit),
             )
@@ -85,7 +85,7 @@ def add_message(chat_id, role, content, sources=None):
             cursor.execute(
                 """
                 INSERT INTO chat_messages (chat_id, role, content, sources)
-                VALUES (%s, %s, %s, %s)
+                VALUES (%s::uuid, %s, %s, %s)
                 """,
                 (chat_id, role, content, Jsonb(sources or [])),
             )
@@ -110,5 +110,5 @@ def add_message(chat_id, role, content, sources=None):
 def delete_chat(chat_id):
     with get_connection() as conn:
         with conn.cursor() as cursor:
-            cursor.execute("DELETE FROM chats WHERE id = %s RETURNING id", (chat_id,))
+            cursor.execute("DELETE FROM chats WHERE id = %s::uuid RETURNING id", (chat_id,))
             return cursor.fetchone() is not None
