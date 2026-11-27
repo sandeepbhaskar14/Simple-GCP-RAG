@@ -1,114 +1,50 @@
-import io
+from pathlib import Path
 import uuid
 
-from pypdf import PdfReader
+from psycopg.types.json import Jsonb
 
+from app.chunking import chunk_document
 from app.storage import upload_to_gcs
 from app.embeddings import generate_embeddings
 from app.database import get_connection
 
 
-def extract_text(file_bytes, filename):
-
-    if filename.endswith(".pdf"):
-
-        reader = PdfReader(io.BytesIO(file_bytes))
-
-        text = ""
-
-        for page in reader.pages:
-            text += page.extract_text() or ""
-            text += "\n"
-
-        return text
-
-    elif filename.endswith(".txt"):
-
-        return file_bytes.decode("utf-8")
-
-    else:
-
-        raise ValueError("Only PDF and TXT files are supported")
-
-
-def chunk_text(text, chunk_size=1000, overlap=150):
-
-    chunks = []
-
-    start = 0
-
-    while start < len(text):
-
-        end = start + chunk_size
-
-        chunk = text[start:end].strip()
-
-        if chunk:
-            chunks.append(chunk)
-
-        start += chunk_size - overlap
-
-    return chunks
-
-
 def ingest_document(file_bytes, filename):
+    """Upload, format-aware chunk, embed, and persist a document."""
+    if not file_bytes:
+        raise ValueError("The uploaded file is empty.")
+    filename = Path(filename or "").name
+    if not filename:
+        raise ValueError("A valid filename is required.")
 
-    # 1. Upload original document to GCS
+    # Validate and chunk before uploading, avoiding GCS orphans for invalid files.
+    chunks = chunk_document(file_bytes, filename)
+    if not chunks:
+        raise ValueError("No extractable text or rows found in document.")
 
     document_id = str(uuid.uuid4())
-
-    gcs_filename = f"{document_id}/{filename}"
-
-    upload_to_gcs(file_bytes, gcs_filename)
-
-    # 2. Extract text
-
-    text = extract_text(file_bytes, filename)
-
-    if not text.strip():
-        raise ValueError("No extractable text found in document")
-
-    # 3. Split into chunks
-
-    chunks = chunk_text(text)
-
-    # 4. Generate embeddings
-
-    embeddings = generate_embeddings(chunks)
-
-    # 5. Store chunks and embeddings in Cloud SQL
+    gcs_uri = upload_to_gcs(file_bytes, f"{document_id}/{filename}")
+    embeddings = generate_embeddings([item["content"] for item in chunks])
+    if len(embeddings) != len(chunks):
+        raise RuntimeError("Embedding count does not match chunk count.")
 
     with get_connection() as conn:
-
         with conn.cursor() as cursor:
-
-            for index, (chunk, embedding) in enumerate(
-                zip(chunks, embeddings)
-            ):
-
+            for index, (item, embedding) in enumerate(zip(chunks, embeddings)):
                 cursor.execute(
                     """
                     INSERT INTO document_chunks
-                    (
-                        document_id,
-                        filename,
-                        content,
-                        embedding,
-                        chunk_number
-                    )
-                    VALUES (%s, %s, %s, %s, %s)
+                    (document_id, filename, content, embedding, chunk_number, metadata)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     """,
-                    (
-                        document_id,
-                        filename,
-                        chunk,
-                        embedding,
-                        index
-                    )
+                    (document_id, filename, item["content"], embedding, index,
+                     Jsonb(item["metadata"])),
                 )
 
     return {
         "document_id": document_id,
         "filename": filename,
-        "total_chunks": len(chunks)
+        "gcs_uri": gcs_uri,
+        "total_chunks": len(chunks),
+        "file_type": Path(filename).suffix.lower().lstrip("."),
     }
