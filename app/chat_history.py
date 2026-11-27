@@ -37,7 +37,7 @@ def get_chat(chat_id):
     with get_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
-                "SELECT id, title, created_at, updated_at FROM chats WHERE id = %s",
+                "SELECT id, title, created_at, updated_at FROM chats WHERE id = %s::uuid",
                 (chat_id,),
             )
             row = cursor.fetchone()
@@ -46,7 +46,7 @@ def get_chat(chat_id):
             cursor.execute(
                 """
                 SELECT role, content, sources, created_at
-                FROM chat_messages WHERE chat_id = %s
+                FROM chat_messages WHERE chat_id = %s::uuid
                 ORDER BY created_at, id
                 """,
                 (chat_id,),
@@ -96,13 +96,13 @@ def add_message(chat_id, role, content, sources=None):
                     SET title = CASE WHEN title = 'New chat' THEN LEFT(%s, 80)
                                      ELSE title END,
                         updated_at = CURRENT_TIMESTAMP
-                    WHERE id = %s
+                    WHERE id = %s::uuid
                     """,
                     (content, chat_id),
                 )
             else:
                 cursor.execute(
-                    "UPDATE chats SET updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                    "UPDATE chats SET updated_at = CURRENT_TIMESTAMP WHERE id = %s::uuid",
                     (chat_id,),
                 )
 
