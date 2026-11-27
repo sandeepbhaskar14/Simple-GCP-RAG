@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+python-multipart
+google-cloud-storage
+google-genai
+psycopg[binary]
+pgvector
+pypdf
+python-dotenv
